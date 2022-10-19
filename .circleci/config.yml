@@ -1,0 +1,133 @@
+version: 2.1
+orbs:
+  aws-ecr: circleci/aws-ecr@6.8.2
+  aws-cli: circleci/aws-cli@1.0.0
+commands:
+  aws-role-arn:
+    description: Set AWS role to assume
+    parameters:
+      profile-name:
+        default: default
+        description: Profile name to be configured.
+        type: string
+      role-arn:
+        default: default
+        description: Role ARN to be configured.
+        type: string
+    steps:
+      - run:
+          command: |
+            aws configure set role_arn \
+              <<parameters.role-arn>> \
+              --profile <<parameters.profile-name>>
+            aws configure set source_profile \
+              <<parameters.profile-name>> \
+              --profile <<parameters.profile-name>>
+          name: Configure AWS Role ARN
+      - run:
+          name: Check ~/.aws/config
+          command: |
+            aws configure list
+  docker-build-push:
+    description: Build and push docker image
+    parameters:
+      aws-account-number:
+        description: AWS account number
+        type: string
+      aws-region:
+        description: AWS region
+        type: string
+      dockerfile:
+        description: Path of Dockerfile
+        type: string
+      repo:
+        description: Name of docker image
+        type: string
+      tag:
+        description: Tag of docker image
+        type: string
+        default: latest
+    steps:
+      - run:
+          name: Set environments
+          command: |
+            echo 'export AWS_ECR_ACCOUNT_URL="<<parameters.aws-account-number>>.dkr.ecr.<<parameters.aws-region>>.amazonaws.com"' >> $BASH_ENV
+            echo 'export AWS_REGION="<<parameters.aws-region>>"' >> $BASH_ENV
+      - aws-ecr/build-image:
+          account-url: AWS_ECR_ACCOUNT_URL
+          dockerfile: <<parameters.dockerfile>>
+          repo: <<parameters.repo>>
+          tag: <<parameters.tag>>
+      - run:
+          name: Login in docker registry
+          command: |
+            aws ecr get-login-password --region <<parameters.aws-region>> --profile default | docker login --username AWS --password-stdin $AWS_ECR_ACCOUNT_URL
+      - aws-ecr/push-image:
+          account-url: AWS_ECR_ACCOUNT_URL
+          repo: <<parameters.repo>>
+          tag: <<parameters.tag>>
+jobs:
+  build:
+    working_directory: ~/sendbird/live_sample
+    docker:
+      - image: circleci/node:12.22.7
+    resource_class: small
+    steps:
+      - checkout
+      - run:
+          name: Install Dependencies
+          command: npm install
+      - run:
+          name: Build
+          command: npm run build
+      - persist_to_workspace:
+          root: .
+          paths:
+            - dist
+  build_and_push_docker:
+    working_directory: ~/sendbird/live_sample
+    docker:
+      - image: circleci/python:3.6
+    resource_class: small
+    steps:
+      - checkout
+      - setup_remote_docker:
+          docker_layer_caching: true
+      - attach_workspace:
+          # Must be absolute path or relative path from working_directory
+          at: .
+      - aws-cli/setup:
+          aws-access-key-id: AWS_ACCESS_KEY_ID
+          aws-secret-access-key: AWS_SECRET_ACCESS_KEY
+          profile-name: default
+          configure-default-region: false
+      - aws-role-arn:
+          role-arn: arn:aws:iam::314716043882:role/ecr-ci-ops
+          profile-name: default
+      - docker-build-push:
+          aws-account-number: '314716043882'
+          aws-region: us-west-2
+          dockerfile: ./Dockerfile
+          repo: live_studio/app
+          tag: '$CIRCLE_TAG'
+
+workflows:
+  version: 2
+  build_and_push:
+    jobs:
+      - build:
+          context: circleci-dashboard-bot
+          filters:
+            tags:
+              only: /^v.*/ # only deploy when it is release
+            branches:
+              ignore: /.*/
+      - build_and_push_docker:
+          requires:
+            - build
+          context: circleci-dashboard-bot
+          filters:
+            tags:
+              only: /^v.*/ # only deploy when it is release
+            branches:
+              ignore: /.*/
