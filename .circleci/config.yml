@@ -70,7 +70,7 @@ jobs:
   build:
     working_directory: ~/sendbird/live_sample
     docker:
-      - image: cimg:node/18.11.0
+      - image: cimg/node:18.11.0
     resource_class: small
     steps:
       - checkout
