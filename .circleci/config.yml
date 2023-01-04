@@ -58,8 +58,6 @@ jobs:
         enum: ["us-east-1", "us-west-2"]
     steps:
       - checkout
-      - setup_remote_docker:
-          docker_layer_caching: true
       - attach_workspace:
           # Must be absolute path or relative path from working_directory
           at: .
