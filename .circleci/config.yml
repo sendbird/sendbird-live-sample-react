@@ -1,71 +1,20 @@
 version: 2.1
 orbs:
-  aws-ecr: circleci/aws-ecr@6.8.2
-  aws-cli: circleci/aws-cli@1.0.0
-commands:
-  aws-role-arn:
-    description: Set AWS role to assume
-    parameters:
-      profile-name:
-        default: default
-        description: Profile name to be configured.
-        type: string
-      role-arn:
-        default: default
-        description: Role ARN to be configured.
-        type: string
-    steps:
-      - run:
-          command: |
-            aws configure set role_arn \
-              <<parameters.role-arn>> \
-              --profile <<parameters.profile-name>>
-            aws configure set source_profile \
-              <<parameters.profile-name>> \
-              --profile <<parameters.profile-name>>
-          name: Configure AWS Role ARN
-      - run:
-          name: Check ~/.aws/config
-          command: |
-            aws configure list
-  docker-build-push:
-    description: Build and push docker image
-    parameters:
-      aws-account-number:
-        description: AWS account number
-        type: string
-      aws-region:
-        description: AWS region
-        type: string
-      dockerfile:
-        description: Path of Dockerfile
-        type: string
-      repo:
-        description: Name of docker image
-        type: string
-      tag:
-        description: Tag of docker image
-        type: string
-        default: latest
-    steps:
-      - run:
-          name: Set environments
-          command: |
-            echo 'export AWS_ECR_ACCOUNT_URL="<<parameters.aws-account-number>>.dkr.ecr.<<parameters.aws-region>>.amazonaws.com"' >> $BASH_ENV
-            echo 'export AWS_REGION="<<parameters.aws-region>>"' >> $BASH_ENV
-      - aws-ecr/build-image:
-          account-url: AWS_ECR_ACCOUNT_URL
-          dockerfile: <<parameters.dockerfile>>
-          repo: <<parameters.repo>>
-          tag: <<parameters.tag>>
-      - run:
-          name: Login in docker registry
-          command: |
-            aws ecr get-login-password --region <<parameters.aws-region>> --profile default | docker login --username AWS --password-stdin $AWS_ECR_ACCOUNT_URL
-      - aws-ecr/push-image:
-          account-url: AWS_ECR_ACCOUNT_URL
-          repo: <<parameters.repo>>
-          tag: <<parameters.tag>>
+  aws-ecr: circleci/aws-ecr@8.2.1
+  aws-cli: circleci/aws-cli@2.1.0
+
+executors:
+  amd64:
+    machine:
+      image: ubuntu-2004:current
+      docker_layer_caching: true
+    resource_class: medium
+  arm64:
+    machine:
+      image: ubuntu-2004:current
+      docker_layer_caching: true
+    resource_class: arm.medium
+
 jobs:
   build:
     working_directory: ~/sendbird/live_sample
@@ -84,11 +33,29 @@ jobs:
           root: .
           paths:
             - dist
-  build_and_push_docker:
-    working_directory: ~/sendbird/live_sample
-    docker:
-      - image: circleci/python:3.6
-    resource_class: small
+  build_container_image_and_push:
+    executor: << parameters.architecture >>
+    environment:
+      AWS_ECR_REGISTRY_ID: "314716043882"
+    parameters:
+      architecture:
+        description: architecture to build
+        type: enum
+        enum: ["amd64", "arm64"]
+      build_path:
+        description: the path to execute docker build
+        type: string
+      dockerfile:
+        description: dockerfile name to use in docker build
+        type: string
+        default: Dockerfile
+      repo:
+        description: ECR repository name to push container image
+        type: string
+      aws_region:
+        description: AWS region of ECR repository to push container image
+        type: enum
+        enum: ["us-east-1", "us-west-2"]
     steps:
       - checkout
       - setup_remote_docker:
@@ -96,20 +63,58 @@ jobs:
       - attach_workspace:
           # Must be absolute path or relative path from working_directory
           at: .
+      - aws-ecr/build-and-push-image:
+          dockerfile: << parameters.dockerfile >>
+          new-profile-name: ci-ops
+          path: << parameters.build_path >>
+          build-path: << parameters.build_path >>
+          platform: linux/<< parameters.architecture >>
+          profile-name: default
+          region: << parameters.aws_region >>
+          repo: << parameters.repo >>
+          role-arn: arn:aws:iam::314716043882:role/ci-ops
+          tag: "$CIRCLE_TAG-<< parameters.architecture >>"
+  push_arch_integrated_manifest:
+    executor: arm64
+    parameters:
+      aws_region:
+        description: AWS region of ECR repository to push container image
+        type: enum
+        enum: ["us-east-1", "us-west-2"]
+      repo:
+        description: ECR repository name to push container image
+        type: string
+    environment:
+      DOCKER_CLI_EXPERIMENTAL: enabled
+      ECR_REPO: 314716043882.dkr.ecr.<<parameters.aws_region>>.amazonaws.com/<<parameters.repo>>
+    steps:
       - aws-cli/setup:
-          aws-access-key-id: AWS_ACCESS_KEY_ID
-          aws-secret-access-key: AWS_SECRET_ACCESS_KEY
           profile-name: default
           configure-default-region: false
-      - aws-role-arn:
-          role-arn: arn:aws:iam::314716043882:role/ecr-ci-ops
-          profile-name: default
-      - docker-build-push:
-          aws-account-number: '314716043882'
-          aws-region: us-west-2
-          dockerfile: ./Dockerfile
-          repo: live_studio/app
-          tag: '$CIRCLE_TAG'
+      - aws-cli/role-arn-setup:
+          profile-name: ci-ops
+          source-profile: default
+          role-arn: arn:aws:iam::314716043882:role/ci-ops
+      - run:
+          name: Login in docker registry
+          command: |
+            aws ecr get-login-password --region <<parameters.aws_region>> --profile ci-ops | docker login --username AWS --password-stdin $ECR_REPO
+      - run:
+          name: Push image manifest
+          command: |
+            docker manifest create "$ECR_REPO:$CIRCLE_TAG" "$ECR_REPO:$CIRCLE_TAG-amd64" "$ECR_REPO:$CIRCLE_TAG-arm64"
+            docker manifest push "$ECR_REPO:$CIRCLE_TAG"
+  scan_credentials:
+    docker:
+      - image: $SEC_THOG_SCANNER_IMAGE
+        aws_auth:
+          aws_access_key_id: $SEC_AWS_ID_FOR_THOG_ECR
+          aws_secret_access_key: $SEC_AWS_KEY_FOR_THOG_ECR
+    resource_class: small
+    steps:
+      - run:
+          name: Scan credentials
+          command: sh scan.sh
 
 workflows:
   version: 2
@@ -117,17 +122,46 @@ workflows:
     jobs:
       - build:
           context: circleci-dashboard-bot
-          filters:
+          filters: &only_version_tag_trigger
             tags:
               only: /^v.*/ # only deploy when it is release
             branches:
               ignore: /.*/
-      - build_and_push_docker:
+      -
+        build_container_image_and_push:
+          name: build_app-<<matrix.architecture>>
+          filters: &only_version_tag_trigger
+            tags:
+              only: /^v.+/
+            branches:
+              ignore: /.*/
+          matrix: &amd64_and_arm64_matrix
+            parameters:
+              architecture:
+                - amd64
+                - arm64
+          build_path: '.'
+          aws_region: us-west-2
+          repo: live_studio/app
+          context:
+            - circleci-dashboard-bot
           requires:
             - build
-          context: circleci-dashboard-bot
-          filters:
-            tags:
-              only: /^v.*/ # only deploy when it is release
-            branches:
-              ignore: /.*/
+      -
+        push_arch_integrated_manifest:
+          name: integrate_manifest_app
+          filters: *only_version_tag_trigger
+          requires:
+            - build_app-amd64
+            - build_app-arm64
+          aws_region: us-west-2
+          repo: live_studio/app
+          context:
+            - circleci-dashboard-bot
+      -
+        scan_credentials:
+          filters: *only_version_tag_trigger
+          context:
+           - devsecops
+          requires:
+            - integrate_manifest_app
