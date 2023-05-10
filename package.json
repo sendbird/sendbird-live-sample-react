@@ -10,7 +10,7 @@
     "start": "vite preview --port $PORT --host"
   },
   "dependencies": {
-    "@sendbird/live-uikit-react": "^1.0.0-beta.3",
+    "@sendbird/live-uikit-react": "^1.0.0-beta.4",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-use": "^17.4.0",
