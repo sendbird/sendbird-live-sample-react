@@ -1,0 +1,12 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: sendbird-live-sample-react
+  description: Public sample repository for Sendbird Live JavaScript
+  annotations:
+    github.com/project-slug: sendbird/sendbird-live-sample-react
+spec:
+  type: sample
+  lifecycle: production
+  owner: dep-client-platform
+  system: sendbird-calls
