@@ -17,7 +17,7 @@ function SampleApp() {
 
     if (authQuery) {
       try {
-        authArgs = JSON.parse(atob(authQuery));
+        authArgs = JSON.parse(decodeURIComponent(atob(authQuery)));
         if (authArgs.app_id) setAppId(authArgs.app_id);
         if (authArgs.user_id) setUserId(authArgs.user_id);
         if (authArgs.access_token) setAccessToken(authArgs.access_token);
