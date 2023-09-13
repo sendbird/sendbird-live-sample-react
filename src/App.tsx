@@ -3,6 +3,8 @@ import { useState, useEffect } from 'react'
 import { useLocation } from 'react-use'
 import { App as SendbirdLiveApp } from '@sendbird/live-uikit-react';
 import './App.css'
+import logo from './logo.png';
+import logoB from './logo-b.png';
 
 function SampleApp() {
   const [appId, setAppId] = useState('')
@@ -41,7 +43,7 @@ function SampleApp() {
               accessToken={accessToken ? accessToken : null}
           /> :
           <div className="login-panel">
-            <img src='/logo.png' className="logo" />
+            <img src={logo} className="logo" />
             <div className='login-form'>
               <div className='section'>Application ID</div>
               <input type='text' className='input'
@@ -61,7 +63,7 @@ function SampleApp() {
               <input type='button' className='submit' value='Sign in'
                 onClick={() => setHasSession(true)}/>
             </div>
-            <img src='/logo-b.png' className="logo-horizontal" />
+            <img src={logoB} className="logo-horizontal" />
           </div>
       }
     </div>
